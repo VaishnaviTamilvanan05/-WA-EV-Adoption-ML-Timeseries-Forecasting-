@@ -5,8 +5,7 @@ import numpy as np
 
 # %%
 
-data=pd.read_csv('E:\\Capstone\\data\\raw\\ev_raw_data.csv')
-
+data=pd.read_csv('E:\\Capstone\\data\\EV\\raw\\ev_raw_data.csv')
 data.columns
 
 # %%
@@ -79,4 +78,16 @@ data['model'].unique()
 # %%
 len(data['model'].unique())
 
+
+# %%
+data.to_csv("E:\\Capstone\\data\\EV\\processed\\ev_cleaned_data.csv", index=True)
+
+# %%
+print(data.select_dtypes(include=['object']).apply(lambda x: x.str.contains(r'^\s|\s$', regex=True).sum()))
+
+# %%
+print(data.columns.duplicated().sum())  # Should return 0
+
+# %%
+data.head()
 # %%
