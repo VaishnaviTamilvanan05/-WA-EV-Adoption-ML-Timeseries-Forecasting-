@@ -1,6 +1,10 @@
 # %%
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import zscore
+
 
 
 # %%
@@ -86,8 +90,54 @@ data.to_csv("E:\\Capstone\\data\\EV\\processed\\ev_cleaned_data.csv", index=True
 print(data.select_dtypes(include=['object']).apply(lambda x: x.str.contains(r'^\s|\s$', regex=True).sum()))
 
 # %%
-print(data.columns.duplicated().sum())  # Should return 0
+print(data.columns.duplicated().sum())  
 
 # %%
 data.head()
+# %%
+data.columns
+# %%
+
+outlier_columns = ["electric_range", "odometer_reading", "sale_price", "model_year"]
+
+# Create a dictionary to store outliers
+outliers_dict = {}
+
+# Detect outliers using IQR method
+for col in outlier_columns:
+    Q1 = data[col].quantile(0.25)
+    Q3 = data[col].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    
+    # Identify outliers
+    outliers = data[(data[col] < lower_bound) | (data[col] > upper_bound)]
+    outliers_dict[col] = outliers.shape[0]
+
+# Detect outliers using Z-score method
+zscore_outliers = {}
+for col in outlier_columns:
+    data["z_score"] = np.abs(zscore(data[col]))
+    zscore_outliers[col] = data[data["z_score"] > 3].shape[0]
+
+# Visualize outlier counts using bar plots
+outliers_df = pd.DataFrame({"IQR Outliers": outliers_dict, "Z-score Outliers": zscore_outliers})
+
+plt.figure(figsize=(10,5))
+outliers_df.plot(kind="bar", colormap="viridis", figsize=(10,5))
+plt.title("Outlier Counts in Selected Numerical Variables")
+plt.xlabel("Feature")
+plt.ylabel("Number of Outliers")
+plt.xticks(rotation=45)
+plt.grid(axis="y")
+plt.show()
+
+# Display outlier summary
+print(outliers_df)
+
+# %%
+
+
+
 # %%
