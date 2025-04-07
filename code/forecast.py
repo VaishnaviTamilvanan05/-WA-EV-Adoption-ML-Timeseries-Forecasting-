@@ -159,7 +159,6 @@ price_model = Prophet(yearly_seasonality=True)
 price_model.fit(price_df)
 price_future = price_model.make_future_dataframe(periods=test_months+48, freq='M')
 price_forecast = price_model.predict(price_future)[['ds', 'yhat']].rename(columns={'yhat': 'avg_sale_price'})
-# %%
 # ----------------------------
 # 5. Hyperparameter Tuning
 # ----------------------------
@@ -305,179 +304,246 @@ print("\nModel saved at:", model_save_path)
 
 
 
-# %% King County Forecasting with Auto-Tuning, Log Transformation, and External Regressor
 
-king_data = data[data['county'] == 'King'].copy()
-king_data['transaction_date'] = pd.to_datetime(king_data['transaction_date'])
-king_monthly = king_data.groupby(king_data['transaction_date'].dt.to_period('M')).agg({
-    'dol_vehicle_id': 'count',
-    'sale_price': 'mean'
-}).reset_index()
-king_monthly['transaction_date'] = king_monthly['transaction_date'].dt.to_timestamp()
 
-df_king = king_monthly.rename(columns={
-    'transaction_date': 'ds',
-    'dol_vehicle_id': 'y',
-    'sale_price': 'avg_sale_price'
-}).sort_values('ds')
-# ----------------------------
-# 1. Train-Test Split
-# ----------------------------
-test_months = 12
-train_king = df_king.iloc[:-test_months].copy()
-test_king = df_king.iloc[-test_months:].copy()
+# %% Automated County-Level Forecasting for Top 10 Counties
 
-# ----------------------------
-# 2. Log Transformation of Target Variable (for training)
-# ----------------------------
-train_king['y'] = np.log1p(train_king['y'])
+# import os
+# import pandas as pd
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from prophet import Prophet
+# from prophet.diagnostics import cross_validation, performance_metrics
+# from sklearn.metrics import mean_squared_error, mean_absolute_error
+# import pickle
+# import time
 
-# ----------------------------
-# 3. Hyperparameter Tuning
-# ----------------------------
-param_grid = [
-    {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 1, 'n_changepoints': 25},
-    {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 1, 'n_changepoints': 50},
-    {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 1, 'n_changepoints': 75},
-    {'seasonality_mode': 'multiplicative', 'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5, 'n_changepoints': 25},
-    {'seasonality_mode': 'multiplicative', 'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5, 'n_changepoints': 50},
-    {'seasonality_mode': 'multiplicative', 'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5, 'n_changepoints': 75},
-    {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 10, 'n_changepoints': 25},
-    {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 10, 'n_changepoints': 50},
-    {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 10, 'n_changepoints': 75},
-]
+# # ----------------------------
+# # Global Data Preparation (if not already loaded)
+# # ----------------------------
+# data = pd.read_csv('E:\\Capstone\\data\\EV\\processed\\ev_cleaned_data.csv')
+# data['transaction_date'] = pd.to_datetime(data['transaction_date'])
 
-best_params = param_grid[0].copy()
-best_rmse = float('inf')
+# # Global aggregation for external regressor model: monthly EV registrations and average sale price
+# monthly_agg = data.groupby(data['transaction_date'].dt.to_period('M')).agg({
+#     'dol_vehicle_id': 'count',
+#     'sale_price': 'mean'
+# }).reset_index()
+# monthly_agg['transaction_date'] = monthly_agg['transaction_date'].dt.to_timestamp()
+# df_global_ext = monthly_agg.rename(columns={
+#     'transaction_date': 'ds',
+#     'dol_vehicle_id': 'y',
+#     'sale_price': 'avg_sale_price'
+# }).sort_values('ds')
 
-for params in param_grid:
-    try:
-        current_model = Prophet(**params)
-        current_model.add_regressor('avg_sale_price')
-        current_model.fit(train_king)
-        
-        df_cv = cross_validation(current_model,
-                                 initial='730 days',
-                                 period='180 days',
-                                 horizon='365 days',
-                                 parallel="processes")
-        df_p = performance_metrics(df_cv)
-        current_rmse = df_p['rmse'].mean()
-        print(f"Params: {params}, RMSE: {current_rmse:.2f}")
-        
-        if current_rmse < best_rmse:
-            best_rmse = current_rmse
-            best_params = params.copy()
+# # ----------------------------
+# # Define function for county-level forecasting
+# # ----------------------------
+# def forecast_county(county_name, data, forecast_periods=48, test_months=12, 
+#                     models_dir=r"E:\Capstone\models", viz_dir=r"E:\Capstone\visualizations"):
+#     """
+#     Processes data for a given county, performs hyperparameter tuning using cross-validation,
+#     trains a final Prophet model with external regressor (sale price) on log-transformed data,
+#     generates forecasts up to 2028, evaluates on the test set, creates and saves visualizations,
+#     and saves the county-specific model.
+    
+#     Returns:
+#       forecast_df (pd.DataFrame): The complete forecast DataFrame.
+#       metrics (dict): Evaluation metrics (RMSE, MAE, MAPE).
+#     """
+#     # Filter data for the county and keep only necessary columns
+#     cols_to_keep = ['transaction_date', 'county', 'sale_price', 'dol_vehicle_id']
+#     county_data = data[data['county'] == county_name][cols_to_keep].copy()
+#     county_data['transaction_date'] = pd.to_datetime(county_data['transaction_date'])
+    
+#     # Aggregate monthly data
+#     county_monthly = county_data.groupby(county_data['transaction_date'].dt.to_period('M')).agg({
+#         'dol_vehicle_id': 'count',
+#         'sale_price': 'mean'
+#     }).reset_index()
+#     county_monthly['transaction_date'] = county_monthly['transaction_date'].dt.to_timestamp()
+    
+#     df_county = county_monthly.rename(columns={
+#         'transaction_date': 'ds',
+#         'dol_vehicle_id': 'y',
+#         'sale_price': 'avg_sale_price'
+#     }).sort_values('ds')
+    
+#     # Train-Test Split: last test_months as test
+#     train_size = len(df_county) - test_months
+#     train_df = df_county.iloc[:train_size].copy()
+#     test_df = df_county.iloc[train_size:].copy()
+    
+#     # Log transformation of target variable on training data
+#     train_df['y'] = np.log1p(train_df['y'])
+    
+#     # ----------------------------
+#     # Hyperparameter Tuning
+#     # ----------------------------
+#     param_grid = [
+#         {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 1, 'n_changepoints': 25},
+#         {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 1, 'n_changepoints': 50},
+#         {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.01, 'seasonality_prior_scale': 1, 'n_changepoints': 75},
+#         {'seasonality_mode': 'multiplicative', 'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5, 'n_changepoints': 25},
+#         {'seasonality_mode': 'multiplicative', 'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5, 'n_changepoints': 50},
+#         {'seasonality_mode': 'multiplicative', 'changepoint_prior_scale': 0.05, 'seasonality_prior_scale': 5, 'n_changepoints': 75},
+#         {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 10, 'n_changepoints': 25},
+#         {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 10, 'n_changepoints': 50},
+#         {'seasonality_mode': 'additive', 'changepoint_prior_scale': 0.1, 'seasonality_prior_scale': 10, 'n_changepoints': 75},
+#     ]
+    
+#     best_params = param_grid[0].copy()
+#     best_rmse = float('inf')
+    
+#     for params in param_grid:
+#         try:
+#             current_model = Prophet(**params)
+#             current_model.add_regressor('avg_sale_price')
+#             current_model.fit(train_df)
             
-    except Exception as e:
-        print(f"⚠️ Failed with params {params}: {str(e)}")
-        continue
+#             df_cv = cross_validation(current_model,
+#                                      initial='730 days',
+#                                      period='180 days',
+#                                      horizon='365 days',
+#                                      parallel="processes")
+#             df_p = performance_metrics(df_cv)
+#             current_rmse = df_p['rmse'].mean()
+#             print(f"Params: {params}, RMSE: {current_rmse:.2f}")
+            
+#             if current_rmse < best_rmse:
+#                 best_rmse = current_rmse
+#                 best_params = params.copy()
+#         except Exception as e:
+#             print(f"⚠️ Failed with params {params}: {str(e)}")
+#             continue
+    
+#     print(f"\n✅ Best Parameters for {county_name}: {best_params}")
+#     print(f"🏆 Validation RMSE: {best_rmse:.2f}")
+    
+#     # ----------------------------
+#     # Final Model Training with Best Parameters
+#     # ----------------------------
+#     final_model = Prophet(**best_params)
+#     final_model.add_regressor('avg_sale_price')
+#     final_model.fit(train_df)
+    
+#     # ----------------------------
+#     # Forecast External Regressor (Sale Price) for County
+#     # ----------------------------
+#     price_df = train_df[['ds', 'avg_sale_price']].rename(columns={'avg_sale_price': 'y'})
+#     price_model = Prophet(yearly_seasonality=True)
+#     price_model.fit(price_df)
+#     price_future = price_model.make_future_dataframe(periods=test_months+forecast_periods, freq='M')
+#     price_forecast = price_model.predict(price_future)[['ds', 'yhat']].rename(columns={'yhat': 'avg_sale_price'})
+    
+#     # ----------------------------
+#     # Forecasting
+#     # ----------------------------
+#     total_steps = test_months + forecast_periods
+#     future_df = final_model.make_future_dataframe(periods=total_steps, freq='M')
+#     # Merge the external regressor forecast into future_df
+#     future_df = future_df.merge(price_forecast, on='ds', how='left')
+    
+#     # Compute average monthly growth rate from training data
+#     train_df['growth_rate'] = train_df['avg_sale_price'].pct_change()
+#     clean_growth = train_df['growth_rate'].replace([np.inf, -np.inf], np.nan).dropna().clip(lower=-0.5, upper=0.5)
+#     avg_growth_rate = clean_growth.mean()
+#     if pd.isna(avg_growth_rate) or abs(avg_growth_rate) > 0.5:
+#         avg_growth_rate = 0.02
+#     print(f"\n{county_name} - Average monthly growth rate for sale price:", avg_growth_rate)
+    
+#     last_price = train_df['avg_sale_price'].iloc[-1]
+#     na_future = future_df[future_df['avg_sale_price'].isna()]
+#     if not na_future.empty:
+#         first_future_idx = na_future.index[0]
+#         for i in range(first_future_idx, len(future_df)):
+#             months_ahead = i - first_future_idx + 1
+#             future_df.loc[future_df.index[i], 'avg_sale_price'] = last_price * ((1 + avg_growth_rate) ** months_ahead)
+#     else:
+#         print("No missing future sale price values to project.")
+    
+#     forecast_df = final_model.predict(future_df)
+#     forecast_df['yhat_orig'] = np.expm1(forecast_df['yhat'])
+#     forecast_df['yhat_lower_orig'] = np.expm1(forecast_df['yhat_lower'])
+#     forecast_df['yhat_upper_orig'] = np.expm1(forecast_df['yhat_upper'])
+    
+#     # ----------------------------
+#     # Evaluation on Test Set
+#     # ----------------------------
+#     test_eval = pd.merge_asof(test_df.sort_values('ds'),
+#                               forecast_df[['ds', 'yhat_orig']].sort_values('ds'),
+#                               on='ds',
+#                               tolerance=pd.Timedelta('30 days'))
+#     print(f"Number of matched test rows for {county_name} with 30-day tolerance:", len(test_eval))
+#     metrics = {}
+#     if not test_eval.empty:
+#         metrics['RMSE'] = np.sqrt(mean_squared_error(test_df['y'], test_eval['yhat_orig']))
+#         metrics['MAE'] = mean_absolute_error(test_df['y'], test_eval['yhat_orig'])
+#         metrics['MAPE'] = np.mean(np.abs((test_df['y'] - test_eval['yhat_orig']) / test_df['y']))
+#         print(f"\n{county_name} - Prophet with External Regressor Model:")
+#         print("Test RMSE:", metrics['RMSE'])
+#         print("Test MAE:", metrics['MAE'])
+#         print("Test MAPE:", metrics['MAPE'])
+#     else:
+#         print(f"No matching forecast dates found for test data in {county_name}.")
+    
+#     # ----------------------------
+#     # Visualization and Saving Visuals
+#     # ----------------------------
+#     # Create a folder for visualizations for this county
+#     county_viz_dir = os.path.join(viz_dir, county_name)
+#     os.makedirs(county_viz_dir, exist_ok=True)
+    
+#     # Forecast Plot
+#     plt.figure(figsize=(12,6))
+#     fig = final_model.plot(forecast_df)
+#     plt.xlim(pd.Timestamp('2023-01-01'), pd.Timestamp('2029-01-01'))
+#     plt.title(f"{county_name} County: Forecast with External Regressor Until 2028")
+#     plt.xlabel("Date")
+#     plt.ylabel("EV Registrations (Original Scale)")
+#     plt.savefig(os.path.join(county_viz_dir, f"{county_name}_forecast.png"))
+#     plt.show()
+    
+#     # Components Plot
+#     fig2 = final_model.plot_components(forecast_df)
+#     plt.savefig(os.path.join(county_viz_dir, f"{county_name}_components.png"))
+#     plt.show()
+    
+#     # ----------------------------
+#     # Save the County-Specific Model
+#     # ----------------------------
+#     model_save_path = os.path.join(models_dir, f"best_model_Prophet_ext_{county_name}.pkl")
+#     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+#     with open(model_save_path, "wb") as f:
+#         pickle.dump(final_model, f)
+#     print(f"{county_name} Model saved at:", model_save_path)
+    
+#     return forecast_df, metrics
 
-print(f"\n✅ Best Parameters: {best_params}")
-print(f"🏆 Validation RMSE: {best_rmse:.2f}")
+# # ----------------------------
+# # Run Forecasting for Specified Counties
+# # ----------------------------
+# counties = ["King", "Snohomish", "Pierce", "Clark", "Kitsap",
+#             "Thurston", "Spokane", "Whatcom", "Benton", "Skagit"]
 
-# ----------------------------
-# 4. Final Model Training with Best Parameters
-# ----------------------------
-final_model = Prophet(**best_params)
-final_model.add_regressor('avg_sale_price')
-final_model.fit(train_king)
+# county_forecasts = {}
+# county_metrics = {}
 
-# ----------------------------
-# 5. Forecast External Regressor (Sale Price)
-# ----------------------------
-# For King County, we forecast the sale price using the training data.
-price_df = train_king[['ds', 'avg_sale_price']].rename(columns={'avg_sale_price': 'y'})
-price_model = Prophet(yearly_seasonality=True)
-price_model.fit(price_df)
-price_future = price_model.make_future_dataframe(periods=test_months+48, freq='M')
-price_forecast = price_model.predict(price_future)[['ds', 'yhat']].rename(columns={'yhat': 'avg_sale_price'})
+# for county in counties:
+#     print(f"\nProcessing forecast for {county} County:")
+#     fc_df, met = forecast_county(county, data, forecast_periods=48, test_months=12, 
+#                                  models_dir=r"E:\Capstone\models", viz_dir=visualizations_folder)
+#     county_forecasts[county] = fc_df
+#     county_metrics[county] = met
 
-# ----------------------------
-# 6. Forecasting
-# ----------------------------
-# Create a future DataFrame for (test_months + 48) months ahead
-future = final_model.make_future_dataframe(periods=test_months + 48, freq='M')
-# Merge the external regressor (avg_sale_price) from the price forecast
-future = future.merge(price_forecast, on='ds', how='left')
+# for county, met in county_metrics.items():
+#     print(f"\n{county} County Metrics:")
+#     print(met)
 
-# Compute the average monthly growth rate from training data's sale price
-train_king['growth_rate'] = train_king['avg_sale_price'].pct_change()
-clean_growth = train_king['growth_rate'].replace([np.inf, -np.inf], np.nan).dropna().clip(lower=-0.5, upper=0.5)
-avg_growth_rate = clean_growth.mean()
-if pd.isna(avg_growth_rate) or abs(avg_growth_rate) > 0.5:
-    avg_growth_rate = 0.02
-print("\nAverage monthly growth rate for sale price (King):", avg_growth_rate)
-
-last_price = train_king['avg_sale_price'].iloc[-1]
-# Check for missing future sale price values and fill them using exponential growth
-na_future = future[future['avg_sale_price'].isna()]
-if not na_future.empty:
-    first_future_idx = na_future.index[0]
-    for i in range(first_future_idx, len(future)):
-        months_ahead = i - first_future_idx + 1
-        future.loc[future.index[i], 'avg_sale_price'] = last_price * ((1 + avg_growth_rate) ** months_ahead)
-else:
-    print("No missing future sale price values to project.")
-
-forecast_king = final_model.predict(future)
-
-# ----------------------------
-# 7. Back-Transformation & Evaluation
-# ----------------------------
-# Back-transform predictions to original scale
-forecast_king['yhat_orig'] = np.expm1(forecast_king['yhat'])
-forecast_king['yhat_lower_orig'] = np.expm1(forecast_king['yhat_lower'])
-forecast_king['yhat_upper_orig'] = np.expm1(forecast_king['yhat_upper'])
-
-# Evaluate on test set using merge_asof with 30-day tolerance
-test_eval = pd.merge_asof(test_king.sort_values('ds'),
-                          forecast_king[['ds', 'yhat_orig']].sort_values('ds'),
-                          on='ds',
-                          tolerance=pd.Timedelta('30 days'))
-print("Number of matched test rows with 30-day tolerance:", len(test_eval))
-if test_eval.empty:
-    print("No matching test dates found in forecast. Check date ranges!")
-else:
-    metrics_king = {
-        'RMSE': np.sqrt(mean_squared_error(test_king['y'], test_eval['yhat_orig'])),
-        'MAE': mean_absolute_error(test_king['y'], test_eval['yhat_orig']),
-        'MAPE': np.mean(np.abs((test_king['y'] - test_eval['yhat_orig']) / test_king['y']))
-
-    }
-    print("\nKing County - Prophet with External Regressor Model:")
-    print("Test RMSE:", metrics_king['RMSE'])
-    print("Test MAE:", metrics_king['MAE'])
-    print("Test MAPE:", metrics_king['MAPE'])
-
-# ----------------------------
-# 8. Visualization
-# ----------------------------
-plt.figure(figsize=(12,6))
-fig_king = final_model.plot(forecast_king)
-plt.xlim(pd.Timestamp('2023-01-01'), pd.Timestamp('2029-01-01'))
-plt.title("King County: Forecast with External Regressor Until 2028")
-plt.xlabel("Date")
-plt.ylabel("EV Registrations (Original Scale)")
-plt.show()
-
-fig2_king = final_model.plot_components(forecast_king)
-plt.show()
-
-# ----------------------------
-# 9. Save the Final Model for King County
-# ----------------------------
-model_save_path_king = r"E:\Capstone\models\best_model_Prophet_ext_King.pkl"
-os.makedirs(os.path.dirname(model_save_path_king), exist_ok=True)
-with open(model_save_path_king, "wb") as f:
-    pickle.dump(final_model, f)
-print("King County Model saved at:", model_save_path_king)
 
 
 
 # %%
-# %% Automated County-Level Forecasting for Top 10 Counties
-
 import os
 import pandas as pd
 import numpy as np
@@ -491,7 +557,7 @@ import time
 # ----------------------------
 # Global Data Preparation (if not already loaded)
 # ----------------------------
-data = pd.read_csv('E:\\Capstone\\data\\EV\\processed\\ev_cleaned_data.csv')
+data = pd.read_csv(r"E:\Capstone\data\EV\processed\ev_cleaned_data.csv")
 data['transaction_date'] = pd.to_datetime(data['transaction_date'])
 
 # Global aggregation for external regressor model: monthly EV registrations and average sale price
@@ -499,7 +565,8 @@ monthly_agg = data.groupby(data['transaction_date'].dt.to_period('M')).agg({
     'dol_vehicle_id': 'count',
     'sale_price': 'mean'
 }).reset_index()
-monthly_agg['transaction_date'] = monthly_agg['transaction_date'].dt.to_timestamp()
+# Convert period to timestamp at month-end
+monthly_agg['transaction_date'] = monthly_agg['transaction_date'].dt.to_timestamp(how='end')
 df_global_ext = monthly_agg.rename(columns={
     'transaction_date': 'ds',
     'dol_vehicle_id': 'y',
@@ -526,12 +593,13 @@ def forecast_county(county_name, data, forecast_periods=48, test_months=12,
     county_data = data[data['county'] == county_name][cols_to_keep].copy()
     county_data['transaction_date'] = pd.to_datetime(county_data['transaction_date'])
     
-    # Aggregate monthly data
+    # Aggregate monthly data and convert to month-end timestamps
     county_monthly = county_data.groupby(county_data['transaction_date'].dt.to_period('M')).agg({
         'dol_vehicle_id': 'count',
         'sale_price': 'mean'
     }).reset_index()
-    county_monthly['transaction_date'] = county_monthly['transaction_date'].dt.to_timestamp()
+    # Convert period to timestamp at month-end (ensuring end-of-month dates)
+    county_monthly['transaction_date'] = county_monthly['transaction_date'].dt.to_timestamp(how='end')
     
     df_county = county_monthly.rename(columns={
         'transaction_date': 'ds',
@@ -614,7 +682,7 @@ def forecast_county(county_name, data, forecast_periods=48, test_months=12,
     # Merge the external regressor forecast into future_df
     future_df = future_df.merge(price_forecast, on='ds', how='left')
     
-    # Compute average monthly growth rate from training data
+    # Compute average monthly growth rate from training data's sale price
     train_df['growth_rate'] = train_df['avg_sale_price'].pct_change()
     clean_growth = train_df['growth_rate'].replace([np.inf, -np.inf], np.nan).dropna().clip(lower=-0.5, upper=0.5)
     avg_growth_rate = clean_growth.mean()
@@ -632,7 +700,9 @@ def forecast_county(county_name, data, forecast_periods=48, test_months=12,
     else:
         print("No missing future sale price values to project.")
     
+    # Generate the forecast using the final model
     forecast_df = final_model.predict(future_df)
+    # Back-transform predictions to original scale
     forecast_df['yhat_orig'] = np.expm1(forecast_df['yhat'])
     forecast_df['yhat_lower_orig'] = np.expm1(forecast_df['yhat_lower'])
     forecast_df['yhat_upper_orig'] = np.expm1(forecast_df['yhat_upper'])
@@ -698,6 +768,9 @@ counties = ["King", "Snohomish", "Pierce", "Clark", "Kitsap",
 
 county_forecasts = {}
 county_metrics = {}
+
+# Define folder for visualizations
+visualizations_folder = r"E:\Capstone\visualizations"
 
 for county in counties:
     print(f"\nProcessing forecast for {county} County:")
