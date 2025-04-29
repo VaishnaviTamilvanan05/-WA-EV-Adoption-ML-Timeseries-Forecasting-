@@ -5,28 +5,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import zscore
 
-
-
 # %%
+data = pd.read_csv('E:\\Capstone\\data\\EV\\raw\\ev_raw_data.csv')
 
-data=pd.read_csv('E:\\Capstone\\data\\EV\\raw\\ev_raw_data.csv')
-data.columns
-
-# %%
-
-data.info()
-
-# %%
-data.head()
-# %%
+# Standardizing column names
 data.columns = data.columns.str.lower().str.strip().str.replace(r"[^a-zA-Z0-9]", "_", regex=True)
 
-# Print new column names to verify
-print("Updated column names:", data.columns)
 # %%
-# Data Preprocessing
-
-# dropping unwanted columns
+# irrelevant or redundant columns
 drop_cols = [
     'electric_vehicle_fee_paid',
     'transportation_electrification_fee_paid',
@@ -43,101 +29,66 @@ drop_cols = [
 ]
 data.drop(drop_cols, axis=1, inplace=True)
 
-data.head()
-
 # %%
+
 data['transaction_date'] = pd.to_datetime(data['transaction_date'])
-
 data['m/y'] = data['transaction_date'].dt.strftime("%m-%Y")
-
 data.set_index('transaction_date', inplace=True)
 
-# %% 
-data.columns
+# %%
+data.drop(['sale_date', 'base_msrp', 'year'], axis=1, inplace=True)
 
 # %%
-# dropping redundant cols
-
-red_cols=['sale_date','base_msrp','year']
-
-data.drop(red_cols, axis=1, inplace=True)
-
-# %%
-
-print("Checking for null values:\n", data.isnull().sum())
-
-duplicate_count = data.duplicated().sum()
-print(f"\nNumber of duplicate rows: {duplicate_count}")
-# %%
+# Handling missing and duplicate data
 data[['postal_code', 'county', 'city']] = data[['postal_code', 'county', 'city']].fillna('Unknown')
 data['state'].fillna('WA', inplace=True)
 data.dropna(subset=['electric_range', 'electric_utility'], inplace=True)
 data.drop_duplicates(inplace=True)
 
 # %%
-data['county'].value_counts()
-# %%
-data['model'].unique()
-
-# %%
-len(data['model'].unique())
-
-
-# %%
 data.to_csv("E:\\Capstone\\data\\EV\\processed\\ev_cleaned_data.csv", index=True)
 
 # %%
-print(data.select_dtypes(include=['object']).apply(lambda x: x.str.contains(r'^\s|\s$', regex=True).sum()))
+print("Whitespace issues in string columns:\n", 
+      data.select_dtypes(include=['object']).apply(lambda x: x.str.contains(r'^\s|\s$', regex=True).sum()))
+
+# Check for duplicated column names
+print(f"Number of duplicated column names: {data.columns.duplicated().sum()}")
 
 # %%
-print(data.columns.duplicated().sum())  
-
-# %%
-data.head()
-# %%
-data.columns
-# %%
-
+# Detecting outliers using IQR and Z-score methods
 outlier_columns = ["electric_range", "odometer_reading", "sale_price", "model_year"]
-
-# Create a dictionary to store outliers
 outliers_dict = {}
+zscore_outliers = {}
 
-# Detect outliers using IQR method
 for col in outlier_columns:
+    # IQR Method
     Q1 = data[col].quantile(0.25)
     Q3 = data[col].quantile(0.75)
     IQR = Q3 - Q1
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
-    
-    # Identify outliers
-    outliers = data[(data[col] < lower_bound) | (data[col] > upper_bound)]
-    outliers_dict[col] = outliers.shape[0]
+    outliers_dict[col] = data[(data[col] < lower_bound) | (data[col] > upper_bound)].shape[0]
 
-# Detect outliers using Z-score method
-zscore_outliers = {}
-for col in outlier_columns:
+    # Z-score Method
     data["z_score"] = np.abs(zscore(data[col]))
     zscore_outliers[col] = data[data["z_score"] > 3].shape[0]
 
-# Visualize outlier counts using bar plots
-outliers_df = pd.DataFrame({"IQR Outliers": outliers_dict, "Z-score Outliers": zscore_outliers})
+# %%
+# Visualizing outlier counts
+outliers_df = pd.DataFrame({
+    "IQR Outliers": outliers_dict,
+    "Z-score Outliers": zscore_outliers
+})
 
-plt.figure(figsize=(10,5))
-outliers_df.plot(kind="bar", colormap="viridis", figsize=(10,5))
+outliers_df.plot(kind="bar", colormap="viridis", figsize=(10, 5))
 plt.title("Outlier Counts in Selected Numerical Variables")
 plt.xlabel("Feature")
 plt.ylabel("Number of Outliers")
 plt.xticks(rotation=45)
 plt.grid(axis="y")
+plt.tight_layout()
 plt.show()
 
-# Display outlier summary
-print(outliers_df)
+print("\nOutlier Summary:\n", outliers_df)
 
-# %%
-
-
-
-# %%

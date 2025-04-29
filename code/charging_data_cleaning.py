@@ -1,82 +1,96 @@
-# %%
+
 import pandas as pd
-import json
 import ast
 import pgeocode
-# %%
-df=pd.read_csv('E:\\Capstone\\data\\charging\\washington_filtered_ev_stations.csv')
-# data=pd.read_csv("E:\\Capstone\\data\\EV\\processed\\ev_cleaned_data.csv")
+import os
 
-# %%
-df.head()
-# %%
-df.columns
-# %%
-# dropping unwanted
-columns_to_drop = [
-    'IsRecentlyVerified', 'UUID', 'DataProviderID', 'OperatorID', 'NumberOfPoints',
-    'GeneralComments', 'StatusTypeID', 'DateLastStatusUpdate', 'DataQualityLevel',
-    'DateCreated', 'DatePlanned', 'OperatorsReference', 'MetadataValues', 'DateLastConfirmed', 
-    'SubmissionStatusTypeID','UsageCost','DataProvidersReference','Connections','UsageTypeID'
+
+df = pd.read_csv(r'E:\Capstone\data\charging\washington_filtered_ev_stations.csv')
+
+cols_to_drop = [
+    'IsRecentlyVerified','UUID','DataProviderID','OperatorID','NumberOfPoints',
+    'GeneralComments','StatusTypeID','DateLastStatusUpdate','DataQualityLevel',
+    'DateCreated','DatePlanned','OperatorsReference','MetadataValues',
+    'DateLastConfirmed','SubmissionStatusTypeID','UsageCost','DataProvidersReference',
+    'UsageTypeID'
 ]
+df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
 
-df.drop(columns=columns_to_drop, inplace=True)
-# %%
-
-
-def get_field(info, field):
-    # If info is a string, convert it to a dictionary using ast.literal_eval
+def parse_connections(info):
+    if pd.isna(info):
+        return []
     if isinstance(info, str):
         try:
-            info = ast.literal_eval(info)
+            return ast.literal_eval(info)
         except (ValueError, SyntaxError):
+            return []
+    if isinstance(info, list):
+        return info
+    return []
+
+df['total_ports'] = df['Connections'].apply(
+    lambda conns: sum(item.get('Quantity', 0) for item in parse_connections(conns))
+)
+df['l2_ports'] = df['Connections'].apply(
+    lambda conns: sum(item.get('Quantity', 0)
+                      for item in parse_connections(conns)
+                      if item.get('LevelID') == 2)
+)
+df['dcfc_ports'] = df['Connections'].apply(
+    lambda conns: sum(item.get('Quantity', 0)
+                      for item in parse_connections(conns)
+                      if item.get('LevelID') == 3)
+)
+
+df.drop(columns=['Connections'], inplace=True)
+
+addr_col = None
+for candidate in ('AddressInfo','Address Info'):
+    if candidate in df.columns:
+        addr_col = candidate
+        break
+
+if addr_col:
+    def get_field(info, field):
+        if pd.isna(info):
             return None
-    # If info is a dictionary, return the desired field's value
-    if isinstance(info, dict):
-        return info.get(field, None)
-    return None
+        if isinstance(info, str):
+            try:
+                info = ast.literal_eval(info)
+            except:
+                return None
+        if isinstance(info, dict):
+            return info.get(field)
+        return None
 
-# Create new columns by applying the helper function for each field
-df['AddressLine1'] = df['AddressInfo'].apply(lambda x: get_field(x, 'AddressLine1'))
-df['Town'] = df['AddressInfo'].apply(lambda x: get_field(x, 'Town'))
-df['Latitude'] = df['AddressInfo'].apply(lambda x: get_field(x, 'Latitude'))
-df['Longitude'] = df['AddressInfo'].apply(lambda x: get_field(x, 'Longitude'))
+    df['AddressLine1'] = df[addr_col].apply(lambda x: get_field(x, 'AddressLine1'))
+    df['Town']         = df[addr_col].apply(lambda x: get_field(x, 'Town'))
+    df['Latitude']     = df[addr_col].apply(lambda x: get_field(x, 'Latitude'))
+    df['Longitude']    = df[addr_col].apply(lambda x: get_field(x, 'Longitude'))
 
-# %%
-df.drop(columns='AddressInfo',inplace=True)
-# %%
-df['ZipCode'] = df['ZipCode'].astype(int)
-# %%
-df.head()
-# %%
-null_counts = df.isnull().sum()
-print("Missing values in each column:")
-print(null_counts)
+    df['Latitude']  = pd.to_numeric(df['Latitude'],  errors='coerce')
+    df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
 
-duplicate_count = df.duplicated().sum()
-print(f"\nNumber of duplicate rows: {duplicate_count}")
+    df.drop(columns=[addr_col], errors='ignore', inplace=True)
+else:
+    df['AddressLine1'] = None
+    df['Town']         = None
+    df['Latitude']     = pd.NA
+    df['Longitude']    = pd.NA
 
-# %%
+df['ZipCode'] = pd.to_numeric(df['ZipCode'], errors='coerce').fillna(0).astype(int)
 nomi = pgeocode.Nominatim('us')
+df['county'] = df['ZipCode'].apply(
+    lambda z: nomi.query_postal_code(str(z).zfill(5)).county_name
+)
 
-def get_county(zip_code):
-    # Ensure the ZIP code is a 5-digit string
-    zip_code = str(zip_code).strip().zfill(5)
-    result = nomi.query_postal_code(zip_code)
-    # The returned result is a pandas Series; county data might be in 'county_name'
-    # Check the output of result to confirm the column name.
-    return result.county_name if hasattr(result, 'county_name') else None
+for col in df.select_dtypes(include='number').columns:
+    if col in ['Latitude', 'Longitude']:
+        continue
+    df[col] = df[col].fillna(0).clip(lower=0)
 
-# Apply the function to create a new 'county' column in df
-df['county'] = df['ZipCode'].apply(get_county)
-
-# %%
-for col in df.select_dtypes(include=['number']).columns:
-    df[col] = df[col].fillna(0).clip(lower=0) 
-             
-# %%
-df.to_csv("E:\\Capstone\\data\\charging\\processed\\WA_charging_cleaned_data.csv", index=True)
-
-df.head()
-# %%
-
+out_dir = r'E:\Capstone\data\charging\processed'
+os.makedirs(out_dir, exist_ok=True)
+out_path = os.path.join(out_dir, 'WA_charging_cleaned_with_ports.csv')
+df.to_csv(out_path, index=False)
+print(f"Saved cleaned charging data with port counts to:\n   {out_path}")
