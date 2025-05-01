@@ -98,4 +98,4 @@ This project delivers a data-driven strategy to forecast **electric vehicle (EV)
 - Meta Forecasting Team — *[Prophet](https://facebook.github.io/prophet/)*
 - [OpenChargeMap](https://openchargemap.org)
 - [Washington State EV Dataset](https://data.wa.gov)
-"""
+
