@@ -1,4 +1,4 @@
-# ⚡ Predicting Electric Vehicle Adoption Trends and Charging Infrastructure Expansion in Washington State (2025–2028)
+# Predicting Electric Vehicle Adoption Trends and Charging Infrastructure Expansion in Washington State (2025–2028)
 
 This project delivers a data-driven strategy to forecast **electric vehicle (EV) adoption trends** and predict the **charging infrastructure needed** across Washington State through 2028. Using advanced **time series models** (Prophet, SARIMA, ARIMA) and **machine learning**, it provides actionable insights to help planners and policymakers address EV infrastructure deficits and plan equitable charger deployment.
 
